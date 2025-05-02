@@ -1,5 +1,4 @@
-Here's the complete `README.md` file with all the details:
-
+### ENTITY EXTRACTION
 ---
 
 ```markdown
