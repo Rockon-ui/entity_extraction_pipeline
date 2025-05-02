@@ -1,0 +1,140 @@
+version: '3.9'
+
+networks:
+  airflow_pipeline:
+    driver: bridge
+
+volumes:
+  airflow_logs:
+  airflow_dags:
+  airflow_db:
+
+services:
+  redis:
+    image: redis:${REDIS_VERSION}
+    container_name: redis
+    restart: always
+    ports:
+      - "${REDIS_PORT}:6379"
+    networks:
+      - airflow_pipeline
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION}
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    networks:
+      - airflow_pipeline
+    volumes:
+      - airflow_db:/var/lib/postgresql/data
+
+  airflow-init:
+    image: apache/airflow:${AIRFLOW_VERSION}
+    container_name: airflow-init
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${SQL_ALCHEMY_CONN}
+      - AIRFLOW__CELERY__RESULT_BACKEND=${RESULT_BACKEND}
+      - AIRFLOW__CELERY__BROKER_URL=${BROKER_URL}
+    entrypoint: >
+      bash -c "
+        pip install pandas &&
+        airflow db upgrade &&
+        airflow users create --username ${AIRFLOW_ADMIN_USER} --firstname Admin --lastname User --role Admin --email ${AIRFLOW_ADMIN_EMAIL} --password ${AIRFLOW_ADMIN_PASSWORD}
+      "
+    networks:
+      - airflow_pipeline
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./utils:/opt/airflow/dags/utils
+      - ./data:/opt/airflow/data
+      - ./output:/opt/airflow/output
+      - ./airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  airflow-webserver:
+    image: apache/airflow:${AIRFLOW_VERSION}
+    container_name: airflow-webserver
+    restart: always
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${SQL_ALCHEMY_CONN}
+      - AIRFLOW__CELERY__RESULT_BACKEND=${RESULT_BACKEND}
+      - AIRFLOW__CELERY__BROKER_URL=${BROKER_URL}
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY}
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__LOGGING__LOGGING_LEVEL=DEBUG
+      - AIRFLOW__API__ENABLE_CONNECTION_TEST=true
+      - AIRFLOW__WEBSERVER__AUTH_BACKEND=airflow.api.auth.backend.basic_auth
+      - AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS=${AIRFLOW_ADMIN_USER}:${AIRFLOW_ADMIN_PASSWORD}
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "${AIRFLOW_PORT}:8080"
+    networks:
+      - airflow_pipeline
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./utils:/opt/airflow/dags/utils
+      - ./data:/opt/airflow/data
+      - ./output:/opt/airflow/output
+      - ./airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: bash -c "pip install pandas apache-airflow-providers-docker && airflow webserver"
+
+  airflow-scheduler:
+    image: apache/airflow:${AIRFLOW_VERSION}
+    container_name: airflow-scheduler
+    restart: always
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${SQL_ALCHEMY_CONN}
+      - AIRFLOW__CELERY__RESULT_BACKEND=${RESULT_BACKEND}
+      - AIRFLOW__CELERY__BROKER_URL=${BROKER_URL}
+    depends_on:
+      - airflow-webserver
+      - redis
+    networks:
+      - airflow_pipeline
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./utils:/opt/airflow/dags/utils
+      - ./data:/opt/airflow/data
+      - ./output:/opt/airflow/output
+      - ./airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: bash -c "pip install pandas apache-airflow-providers-docker && airflow scheduler"
+
+  airflow-worker:
+    image: apache/airflow:${AIRFLOW_VERSION}
+    container_name: airflow-worker
+    restart: always
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${SQL_ALCHEMY_CONN}
+      - AIRFLOW__CELERY__RESULT_BACKEND=${RESULT_BACKEND}
+      - AIRFLOW__CELERY__BROKER_URL=${BROKER_URL}
+      - AIRFLOW__API__ENABLE_CONNECTION_TEST=true
+    depends_on:
+      - airflow-webserver
+      - redis
+    networks:
+      - airflow_pipeline
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./utils:/opt/airflow/dags/utils
+      - ./data:/opt/airflow/data
+      - ./output:/opt/airflow/output
+      - ./airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: bash -c "pip install pandas apache-airflow-providers-docker && airflow celery worker"
